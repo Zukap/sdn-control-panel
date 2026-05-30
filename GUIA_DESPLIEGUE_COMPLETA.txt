@@ -1,0 +1,576 @@
+================================================================================
+GUIA DE DESPLIEGUE COMPLETA — SDN Control Panel
+Practica: Redes Definidas por Software (SDN)
+Topologia: tree,depth=2,fanout=3 | OpenFlow 1.3 | XGBoost + Dijkstra
+Desde cero — maquinas virtuales limpias (Ubuntu 20.04)
+================================================================================
+
+INFRAESTRUCTURA REQUERIDA
+================================================================================
+
+PC Windows
+    |
+    |- VM Ryu     (Ubuntu 20.04) — Controlador, Flask, XGBoost, ngrok
+    `- VM Mininet (Ubuntu 20.04) — Mininet, OVS, VLC, iperf
+
+Topologia Mininet:
+        s1  (DPID 1, root)
+       /|\
+     s2 s3 s4
+    /|\  /|\  /|\
+  h1h2h3 h4h5h6 h7h8h9
+
+  s2 (DPID 2): h1=p2, h2=p3, h3=p4
+  s3 (DPID 3): h4=p2, h5=p3, h6=p4   <- h4 es el servidor VLC
+  s4 (DPID 4): h7=p2, h8=p3, h9=p4
+  IPs: h1=10.0.0.1, h2=10.0.0.2 ... h9=10.0.0.9
+
+================================================================================
+PASO 0 — WINDOWS: Instalar y configurar XLaunch
+================================================================================
+
+XLaunch permite mostrar ventanas graficas (VLC) de la VM Mininet en Windows.
+
+1. Descargar VcXsrv desde:
+   https://sourceforge.net/projects/vcxsrv/
+
+2. Instalar con opciones por defecto.
+
+3. Abrir XLaunch desde el menu de inicio:
+   - Multiple windows
+   - Display number: 0
+   - Start no client
+   - Marcar "Disable access control"
+   - Clic en Finish
+
+4. En el Firewall de Windows:
+   - Buscar "Firewall de Windows Defender"
+   - Permitir una aplicacion a traves del firewall
+   - Buscar VcXsrv y marcar tanto red privada como publica
+
+5. Obtener la IP de Windows (necesaria mas adelante):
+   Abrir PowerShell y ejecutar:
+   ipconfig
+   Anotar la IPv4 de la red compartida con las VMs (ej: 192.168.1.100)
+
+================================================================================
+PASO 1 — VM RYU: Instalacion de dependencias
+================================================================================
+
+Conectarse a la VM Ryu y ejecutar los siguientes comandos.
+
+--- Actualizar el sistema ---
+
+sudo apt update && sudo apt upgrade -y
+
+--- Instalar Python y pip ---
+
+sudo apt install -y python3 python3-pip python3-dev
+sudo apt install -y git curl wget build-essential
+
+--- Instalar Ryu ---
+
+pip3 install ryu
+
+Si da error de dependencias con eventlet:
+pip3 install eventlet==0.30.2
+pip3 install ryu
+
+Verificar instalacion:
+ryu-manager --version
+
+--- Instalar Flask y dependencias web ---
+
+pip3 install flask flask-cors requests
+
+--- Instalar XGBoost y librerias de machine learning ---
+
+pip3 install xgboost scikit-learn numpy pandas
+
+--- Instalar ngrok ---
+
+curl -sSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc \
+  | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
+
+echo "deb https://ngrok-agent.s3.amazonaws.com buster main" \
+  | sudo tee /etc/apt/sources.list.d/ngrok.list
+
+sudo apt update && sudo apt install -y ngrok
+
+Configurar ngrok con tu token (obtener en https://dashboard.ngrok.com):
+ngrok config add-authtoken <TU_TOKEN>
+
+Verificar instalacion:
+ngrok --version
+
+================================================================================
+PASO 2 — VM RYU: Obtener los archivos del proyecto
+================================================================================
+
+--- Clonar el repositorio desde GitHub ---
+
+cd ~
+git clone https://github.com/Zukap/sdn-control-panel.git
+cd sdn-control-panel
+ls
+
+Deben aparecer:
+  collector_xgb.py
+  dataset.csv
+  dijkstra_router.py
+  index.html
+  proxy.py
+  recolectar.sh
+  xgb_model.pkl  (si fue subido al repo)
+
+Si xgb_model.pkl no esta en el repo, se genera en el Paso 3.
+
+================================================================================
+PASO 3 — VM RYU: Generar el modelo XGBoost (solo si no existe xgb_model.pkl)
+================================================================================
+
+Si el archivo xgb_model.pkl ya existe en la carpeta, saltar este paso.
+
+Para generar el modelo se necesita tener Mininet corriendo y generar
+trafico de los 3 tipos. Ejecutar el script automatizado:
+
+cd ~/sdn-control-panel
+chmod +x recolectar.sh
+./recolectar.sh
+
+El script guia paso a paso para recolectar trafico tipo 1, 2 y 3
+desde el CLI de Mininet, y luego entrena el modelo automaticamente.
+
+Al finalizar debe aparecer:
+  LISTO - xgb_model.pkl creado correctamente.
+
+================================================================================
+PASO 4 — VM MININET: Instalacion de dependencias
+================================================================================
+
+Conectarse a la VM Mininet y ejecutar los siguientes comandos.
+
+--- Actualizar el sistema ---
+
+sudo apt update && sudo apt upgrade -y
+
+--- Instalar Mininet ---
+
+sudo apt install -y mininet
+
+Verificar:
+sudo mn --version
+
+--- Instalar Open vSwitch ---
+
+sudo apt install -y openvswitch-switch openvswitch-common
+
+Verificar:
+sudo ovs-vsctl --version
+
+--- Instalar iperf ---
+
+sudo apt install -y iperf
+
+--- Instalar VLC ---
+
+sudo apt install -y vlc
+
+Si VLC da error de permisos como root, editar:
+sudo sed -i 's/geteuid/getppid/' /usr/bin/vlc
+
+--- Colocar el video de prueba ---
+
+Copiar un archivo de video MP4 a:
+/home/mininet/sample_640x360.mp4
+
+Si no se tiene un video, descargar uno de prueba:
+wget -O /home/mininet/sample_640x360.mp4 \
+  https://www.w3schools.com/html/mov_bbb.mp4
+
+================================================================================
+PASO 5 — VM RYU: Levantar servicios (6 terminales)
+================================================================================
+
+Ejecutar en este orden exacto. Esperar que cada servicio arranque
+antes de abrir el siguiente terminal.
+
+--- Terminal 1 — Controlador Ryu ---
+
+cd ~/sdn-control-panel
+python3 -m ryu.cmd.manager ryu.app.ofctl_rest --wsapi-port 8080
+
+Listo cuando aparece:
+  loading app ryu.app.ofctl_rest
+  instantiating app None of SimpleSwitch13
+  connected socket: ...
+
+NOTA: Este terminal quedara esperando conexiones de switches.
+      Continuara mostrando mensajes cuando Mininet conecte.
+
+--- Terminal 2 — Modelo XGBoost ---
+
+cd ~/sdn-control-panel
+python3 collector_xgb.py --mode serve
+
+Listo cuando aparece:
+  Servidor XGBoost en http://0.0.0.0:5001
+  Modelo: OK
+
+--- Terminal 3 — Router Dijkstra ---
+
+cd ~/sdn-control-panel
+python3 dijkstra_router.py
+
+Listo cuando aparece:
+  Dijkstra Router - tree,depth=2,fanout=3
+  Instalando flows FLOOD base...
+  Listo.
+
+--- Terminal 4 — Proxy Flask ---
+
+cd ~/sdn-control-panel
+python3 proxy.py
+
+Listo cuando aparece:
+  Proxy Flask
+  * Running on http://0.0.0.0:5000
+
+--- Terminal 5 — Ngrok ---
+
+ngrok http 5000
+
+Listo cuando aparece la linea:
+  Forwarding  https://xxxx.ngrok-free.app -> http://localhost:5000
+
+IMPORTANTE: Copiar la URL https://xxxx.ngrok-free.app
+            Esta URL cambia cada vez que se reinicia ngrok.
+
+--- Terminal 6 — Verificacion de salud ---
+
+curl http://localhost:5000/health
+
+Respuesta esperada:
+  {"dijkstra_router": "ok", "ryu_ofctl": "ok", "xgb_model": "ok"}
+
+Si alguno dice "unreachable":
+  - ryu_ofctl unreachable  -> revisar Terminal 1
+  - xgb_model unreachable  -> revisar Terminal 2
+  - dijkstra_router unreachable -> revisar Terminal 3
+
+================================================================================
+PASO 6 — VM MININET: Levantar la red
+================================================================================
+
+--- Obtener las IPs necesarias ---
+
+IP de Windows (desde PowerShell):
+  ipconfig
+
+IP de VM Ryu (desde la VM Ryu):
+  ip addr show | grep "inet " | grep -v 127
+
+--- Configurar DISPLAY para VLC grafico ---
+
+En la VM Mininet, antes de iniciar Mininet:
+export DISPLAY=<IP-Windows>:0.0
+
+Ejemplo:
+export DISPLAY=192.168.1.100:0.0
+
+Verificar que XLaunch responde:
+xeyes
+(Debe aparecer una ventana con ojos en Windows. Cerrar con Ctrl+C)
+
+--- Iniciar Mininet ---
+
+sudo mn --topo tree,depth=2,fanout=3 \
+        --controller=remote,ip=<IP-RYU>,port=6653 \
+        --switch ovsk,protocols=OpenFlow13
+
+Ejemplo:
+sudo mn --topo tree,depth=2,fanout=3 \
+        --controller=remote,ip=10.253.249.111,port=6653 \
+        --switch ovsk,protocols=OpenFlow13
+
+Listo cuando aparece el CLI:
+  mininet>
+
+En el Terminal 1 de Ryu deben aparecer mensajes como:
+  switch connected: ...
+  FLOOD instalado en DPID 1, 2, 3, 4
+
+--- Verificar conectividad ---
+
+mininet> pingall
+
+Resultado esperado: 0% dropped
+Si hay drops, esperar 5 segundos y repetir el pingall.
+
+================================================================================
+PASO 7 — VM MININET: Configurar y lanzar el stream VLC
+================================================================================
+
+--- Configurar rutas multicast ---
+
+mininet> h4 route add -net 224.0.0.0 netmask 240.0.0.0 dev h4-eth0
+mininet> h1 route add -net 224.0.0.0 netmask 240.0.0.0 dev h1-eth0
+
+Si se quieren agregar mas clientes VLC, agregar la ruta en cada host:
+mininet> h2 route add -net 224.0.0.0 netmask 240.0.0.0 dev h2-eth0
+mininet> h3 route add -net 224.0.0.0 netmask 240.0.0.0 dev h3-eth0
+
+--- Abrir terminal del servidor VLC (h4) ---
+
+mininet> xterm h4
+
+En la ventana xterm de h4 que se abre en Windows:
+cvlc /home/mininet/sample_640x360.mp4 --loop \
+  --sout '#rtp{dst=239.1.1.1,port=5004,mux=ts,ttl=10}' \
+  --no-sout-rtp-sap --no-sout-standard-sap
+
+El servidor queda transmitiendo en bucle. No debe mostrar errores rojos.
+
+--- Abrir terminal del cliente VLC (h1) ---
+
+mininet> xterm h1
+
+En la ventana xterm de h1 que se abre en Windows:
+cvlc --network-caching=2000 rtp://@239.1.1.1:5004
+
+Debe aparecer la ventana VLC reproduciendo el video.
+
+Para agregar mas clientes (h2, h3, etc.):
+mininet> xterm h2
+# En xterm de h2:
+cvlc --network-caching=2000 rtp://@239.1.1.1:5004
+
+================================================================================
+PASO 8 — APP WEB: Panel de Control
+================================================================================
+
+1. Abrir el archivo index.html en Chrome (recomendado) o Firefox.
+
+2. En el campo "Proxy URL" pegar la URL de ngrok:
+   https://xxxx.ngrok-free.app
+
+3. Clic en "Conectar".
+
+4. Verificar que los tres badges en la parte superior muestren:
+   - RYU    -> RYU 4SW
+   - XGB    -> XGB OK
+   - ROUTER -> ROUTER OK
+
+Si algun badge muestra ERR, revisar el servicio correspondiente en la VM Ryu.
+
+--- Funcionalidades del panel ---
+
+TOPOLOGIA DE RED:
+  - Muestra el arbol s1 -> s2/s3/s4 -> hosts
+  - Los pesos de los enlaces se actualizan segun XGBoost (w=10/40/80)
+  - Los hosts bloqueados aparecen en rojo
+
+MODELO XGBOOST:
+  - Muestra el tipo de trafico detectado: T1 / T2 / T3
+  - Barras de probabilidad en tiempo real para los 3 tipos
+  - Se actualiza automaticamente cada 8 segundos
+
+ENRUTAMIENTO DIJKSTRA:
+  - Seleccionar origen y destino en los menus desplegables
+  - Clic en "Calcular Ruta" para instalar los flows en los switches
+  - Muestra el camino, numero de hops, costo y ancho de banda
+
+CONTROL DE STREAM MULTICAST:
+  - Boton "Desactivar": instala regla DROP en el switch correspondiente
+    y el video se corta en ese host
+  - Boton "Activar": reinstala la regla de reenvio y el video se restaura
+  - El punto verde/rojo indica si el host esta activo o bloqueado
+
+================================================================================
+PASO 9 — DEMO RECOMENDADA PARA SUSTENTACION
+================================================================================
+
+Secuencia sugerida:
+
+1. Mostrar panel con los tres badges verdes (RYU 4SW | XGB OK | ROUTER OK)
+
+2. Mostrar la topologia visual con los pesos dinamicos en los enlaces
+
+3. Generar trafico para demostrar XGBoost:
+   mininet> h1 iperf -s &
+   mininet> h9 iperf -c 10.0.0.1 -t 60 &
+   Observar en el panel como las barras de T2/T3 suben y el peso cambia
+
+4. Calcular una ruta (ejemplo h1 -> h9):
+   Seleccionar h1 como origen y h9 como destino
+   Clic en "Calcular Ruta"
+   Mostrar el path: s2 -> s1 -> s4 con los pesos
+
+5. Mostrar el stream VLC funcionando en la ventana de h1
+
+6. Clic en "Desactivar h1" en el panel:
+   El video en h1 se corta
+
+7. Clic en "Activar h1" en el panel:
+   El video en h1 se restaura
+
+8. Desactivar h2 y h3 para mostrar control granular por host dentro
+   del mismo switch (s2)
+
+================================================================================
+SOLUCION DE PROBLEMAS COMUNES
+================================================================================
+
+PROBLEMA: Badge RYU ERR
+CAUSA: Mininet no se conecto al controlador
+SOLUCION: Verificar que la IP del controlador en el comando mn sea la IP
+          correcta de la VM Ryu. Ejecutar en VM Ryu:
+          ip addr show | grep "inet " | grep -v 127
+
+PROBLEMA: Badge XGB ERR
+CAUSA: collector_xgb.py no esta corriendo o el modelo no existe
+SOLUCION: python3 collector_xgb.py --mode serve
+          Verificar que existe xgb_model.pkl en la carpeta
+
+PROBLEMA: pingall con drops
+CAUSA: Los flows FLOOD no se instalaron correctamente
+SOLUCION: Clic en "Conectar" en la app web para reinstalar flows
+          O ejecutar en VM Ryu:
+          curl -X POST http://localhost:8080/stats/flowentry/add \
+            -H "Content-Type: application/json" \
+            -d '{"dpid":1,"priority":0,"match":{},"actions":[{"type":"OUTPUT","port":"FLOOD"}]}'
+
+PROBLEMA: VLC muestra "Host 239.1.1.1 port 5004 is unreachable"
+CAUSA: Rutas multicast no configuradas en el host
+SOLUCION: Ejecutar en el CLI de Mininet:
+          mininet> h4 route add -net 224.0.0.0 netmask 240.0.0.0 dev h4-eth0
+          mininet> h1 route add -net 224.0.0.0 netmask 240.0.0.0 dev h1-eth0
+
+PROBLEMA: VLC muestra "unable to open MRL rtp://@239.1.1.1:5004"
+CAUSA: El servidor VLC en h4 no esta corriendo o uso parametros incorrectos
+SOLUCION: Reiniciar VLC en h4 con los parametros exactos:
+          cvlc /home/mininet/sample_640x360.mp4 --loop \
+            --sout '#rtp{dst=239.1.1.1,port=5004,mux=ts,ttl=10}' \
+            --no-sout-rtp-sap --no-sout-standard-sap
+
+PROBLEMA: Boton Desactivar no corta el video
+CAUSA: dijkstra_router.py viejo sin el endpoint /multicast/block
+SOLUCION: Reiniciar con el archivo actualizado del repositorio:
+          pkill -f dijkstra_router.py
+          python3 dijkstra_router.py
+
+PROBLEMA: Log muestra "ruta no encontrada"
+CAUSA: proxy.py viejo sin la ruta /multicast/block
+SOLUCION: Reiniciar con el archivo actualizado del repositorio:
+          pkill -f proxy.py
+          python3 proxy.py
+
+PROBLEMA: Stream no se corta aunque el boton funciona
+CAUSA: Match incorrecto en OVS, los paquetes no pasan por la regla
+SOLUCION: Verificar que byte_count sube en la regla priority=200:
+          curl -s http://localhost:8080/stats/flow/2 | python3 -m json.tool
+          Si byte_count es 0, reinstalar dijkstra_router.py actualizado
+
+PROBLEMA: ngrok muestra "ERR_NGROK_3200" en el navegador
+CAUSA: La URL de ngrok cambio al reiniciarlo
+SOLUCION: Copiar la nueva URL del Terminal 5 y pegarla en el campo
+          Proxy URL del panel web, luego clic en Conectar
+
+================================================================================
+COMANDOS DE DIAGNOSTICO RAPIDO
+================================================================================
+
+# Health check completo
+curl -s http://localhost:5000/health | python3 -m json.tool
+
+# Ver flows instalados en s2 (switch de h1, h2, h3)
+curl -s http://localhost:8080/stats/flow/2 | python3 -m json.tool
+
+# Ver flows instalados en s3 (switch de h4, h5, h6)
+curl -s http://localhost:8080/stats/flow/3 | python3 -m json.tool
+
+# Verificar que el endpoint multicast responde correctamente
+curl -X POST http://localhost:5000/multicast/block \
+     -H "Content-Type: application/json" \
+     -d '{"dpid":2,"active_ports":[3,4]}'
+# Respuesta esperada: {"ok": true, "dpid": 2, "active_ports": [3, 4]}
+
+# Ver prediccion del modelo XGBoost
+curl -s http://localhost:5001/predict | python3 -m json.tool
+
+# Ver switches conectados a Ryu
+curl -s http://localhost:8080/stats/switches
+
+# Calcular ruta manualmente
+curl -X POST http://localhost:5000/route \
+     -H "Content-Type: application/json" \
+     -d '{"src":"h1","dst":"h9"}'
+
+================================================================================
+ARCHIVOS DEL PROYECTO
+================================================================================
+
+proxy.py
+  Proxy Flask en puerto 5000. Resuelve CORS y redirige peticiones:
+  /stats/*         -> Ryu ofctl_rest (puerto 8080)
+  /route           -> dijkstra_router (puerto 5002)
+  /topology        -> dijkstra_router (puerto 5002)
+  /bandwidth/*     -> dijkstra_router (puerto 5002)
+  /health          -> dijkstra_router (puerto 5002)
+  /multicast/block -> dijkstra_router (puerto 5002)
+  /predict         -> collector_xgb (puerto 5001)
+
+dijkstra_router.py
+  Algoritmo Dijkstra con pesos dinamicos en puerto 5002.
+  Instala flows en switches via Ryu y controla el stream multicast
+  mediante reglas OpenFlow de reenvio selectivo o DROP.
+
+collector_xgb.py
+  Recolector de metricas y servidor XGBoost en puerto 5001.
+  Modos: collect (recolectar datos), train (entrenar), serve (servir API).
+
+xgb_model.pkl
+  Modelo XGBoost entrenado. Clasifica trafico en T1/T2/T3.
+
+dataset.csv
+  Dataset de entrenamiento con metricas de flujo recolectadas de OVS.
+
+index.html
+  Panel de control web. Abrir directamente en el navegador.
+
+recolectar.sh
+  Script para recolectar datos y reentrenar el modelo si es necesario.
+
+================================================================================
+ORDEN DE ARRANQUE RESUMIDO
+================================================================================
+
+Windows:
+  1. Iniciar XLaunch con Disable access control
+
+VM Ryu (en este orden):
+  T1: python3 -m ryu.cmd.manager ryu.app.ofctl_rest --wsapi-port 8080
+  T2: python3 collector_xgb.py --mode serve
+  T3: python3 dijkstra_router.py
+  T4: python3 proxy.py
+  T5: ngrok http 5000  ->  copiar URL https://xxxx.ngrok-free.app
+  T6: curl http://localhost:5000/health  ->  verificar "ok" en los 3 servicios
+
+VM Mininet:
+  export DISPLAY=<IP-Windows>:0.0
+  sudo mn --topo tree,depth=2,fanout=3 \
+          --controller=remote,ip=<IP-RYU>,port=6653 \
+          --switch ovsk,protocols=OpenFlow13
+  mininet> h4 route add -net 224.0.0.0 netmask 240.0.0.0 dev h4-eth0
+  mininet> h1 route add -net 224.0.0.0 netmask 240.0.0.0 dev h1-eth0
+  mininet> pingall
+  mininet> xterm h4  ->  lanzar servidor VLC
+  mininet> xterm h1  ->  lanzar cliente VLC
+
+App Web:
+  Abrir index.html -> pegar URL ngrok -> Conectar
+  Verificar badges: RYU 4SW | XGB OK | ROUTER OK
+
+================================================================================
+Guia generada para la version final del proyecto SDN — Mayo 2026
+================================================================================
