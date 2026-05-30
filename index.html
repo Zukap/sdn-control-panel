@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>SDN Control Panel</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:'Segoe UI',sans-serif;background:#0f0f1a;color:#e0e0e0}
+    header{background:#1a1a2e;padding:16px 24px;border-bottom:2px solid #00d4ff;display:flex;align-items:center;justify-content:space-between}
+    header h1{color:#00d4ff;font-size:18px}
+    .header-status{display:flex;gap:10px}
+    .badge{padding:3px 10px;border-radius:4px;font-size:11px;font-weight:bold;font-family:monospace}
+    .badge.ok{background:rgba(74,222,128,.15);color:#4ade80;border:1px solid #4ade80}
+    .badge.err{background:rgba(248,113,113,.15);color:#f87171;border:1px solid #f87171}
+    .badge.warn{background:rgba(251,191,36,.15);color:#fbbf24;border:1px solid #fbbf24}
+    .container{max-width:1100px;margin:24px auto;padding:0 16px}
+    .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+    .card{background:#16213e;padding:18px;border-radius:10px;margin-bottom:16px}
+    .card h2{margin-bottom:14px;font-size:12px;color:#aaa;letter-spacing:2px;text-transform:uppercase}
+    .url-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .url-row label{font-size:12px;color:#aaa;white-space:nowrap}
+    .url-row input{flex:1;min-width:240px;background:#0f0f1a;border:1px solid #333;color:#00d4ff;padding:7px 12px;border-radius:6px;font-size:12px;font-family:monospace}
+    .btn{padding:7px 16px;border:none;border-radius:6px;cursor:pointer;font-weight:bold;font-size:12px;transition:opacity .2s}
+    .btn:hover{opacity:.85}
+    .btn-cyan{background:#00d4ff;color:#000}
+    .btn-gray{background:#2a3a4a;color:#aaa}
+    .switches-grid{display:flex;gap:10px;flex-wrap:wrap}
+    .switch-card{background:#0f0f1a;border:1px solid #1e3a5f;border-radius:8px;padding:10px 16px;min-width:90px}
+    .sw-name{font-size:16px;font-weight:bold;color:#00d4ff}
+    .sw-id{font-size:10px;color:#555}
+    .sw-flows{font-size:11px;color:#aaa;margin-top:4px}
+    .sw-weight{font-size:11px;color:#fbbf24}
+    .traffic-box{display:flex;align-items:center;gap:16px;padding:12px 16px;background:#0f0f1a;border-radius:8px;border:1px solid #1e3a5f}
+    .traffic-type{font-size:28px;font-weight:bold;min-width:40px;text-align:center}
+    .t1{color:#4ade80}.t2{color:#fbbf24}.t3{color:#f87171}
+    .traffic-desc{font-size:13px;color:#ccc}
+    .traffic-weight{font-size:11px;color:#aaa;margin-top:4px}
+    .traffic-conf{font-size:11px;color:#666}
+    .route-inputs{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+    .route-inputs label{font-size:12px;color:#aaa}
+    .route-inputs select{background:#0f0f1a;border:1px solid #333;color:#00d4ff;padding:6px 10px;border-radius:6px;font-size:12px}
+    .route-result{background:#0f0f1a;border-radius:8px;padding:12px;font-size:12px;min-height:60px;color:#aaa}
+    .route-path{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px}
+    .route-node{background:#1a2a4a;border:1px solid #00d4ff;color:#00d4ff;padding:4px 10px;border-radius:4px;font-size:11px;font-family:monospace;text-align:center}
+    .route-arrow{color:#444}
+    .host-row{display:flex;align-items:center;gap:12px;padding:9px 0;border-bottom:1px solid #1e2a3a}
+    .host-row:last-child{border-bottom:none}
+    .host-dot{width:10px;height:10px;border-radius:50%;background:#4ade80;flex-shrink:0}
+    .host-dot.off{background:#f87171}
+    .host-name{font-weight:bold;font-size:13px;color:#fff;min-width:24px}
+    .host-ip{font-size:10px;color:#555}
+    .host-status{margin-left:auto;font-size:11px;min-width:60px;text-align:right}
+    .toggle-btn{padding:5px 12px;border:none;border-radius:6px;cursor:pointer;font-weight:bold;font-size:11px}
+    .toggle-btn.active{background:#f87171;color:#fff}
+    .toggle-btn.inactive{background:#4ade80;color:#000}
+    .toggle-btn:disabled{opacity:.5;cursor:not-allowed}
+    .bw-row{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+    .bw-bar-wrap{flex:1;background:#0f0f1a;border-radius:4px;height:8px}
+    .bw-bar{height:8px;border-radius:4px;transition:width .5s}
+    .bw-label{font-size:11px;color:#aaa;min-width:100px}
+    .bw-value{font-size:11px;color:#00d4ff;min-width:60px;text-align:right}
+    #topoCanvas{width:100%;height:210px;background:#0a0f1a;border-radius:8px;display:block}
+    #log{background:#000;padding:10px;border-radius:6px;height:150px;overflow-y:auto;font-size:11px;font-family:monospace}
+    .log-ok{color:#4ade80;margin-bottom:2px}
+    .log-err{color:#f87171;margin-bottom:2px}
+    .log-warn{color:#fbbf24;margin-bottom:2px}
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>SDN Control Panel - tree,depth=2,fanout=3</h1>
+  <div class="header-status">
+    <span id="badge-ryu"   class="badge warn">RYU ...</span>
+    <span id="badge-xgb"   class="badge warn">XGB ...</span>
+    <span id="badge-route" class="badge warn">ROUTER ...</span>
+  </div>
+</header>
+
+<div class="container">
+
+  <div class="card">
+    <h2>Configuracion</h2>
+    <div class="url-row">
+      <label>Proxy URL (ngrok):</label>
+      <input id="proxyUrl" value="https://unmournful-unentombed-malena.ngrok-free.dev"
+             placeholder="https://xxxx.ngrok-free.dev">
+      <button class="btn btn-cyan" onclick="init()">Conectar</button>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <h2>Estado de Switches</h2>
+      <div class="switches-grid">
+        <div class="switch-card"><div class="sw-name">s1</div><div class="sw-id">DPID 1</div><div class="sw-flows" id="flows-1">-</div><div class="sw-weight" id="weight-1">-</div></div>
+        <div class="switch-card"><div class="sw-name">s2</div><div class="sw-id">DPID 2</div><div class="sw-flows" id="flows-2">-</div><div class="sw-weight" id="weight-2">-</div></div>
+        <div class="switch-card"><div class="sw-name">s3</div><div class="sw-id">DPID 3</div><div class="sw-flows" id="flows-3">-</div><div class="sw-weight" id="weight-3">-</div></div>
+        <div class="switch-card"><div class="sw-name">s4</div><div class="sw-id">DPID 4</div><div class="sw-flows" id="flows-4">-</div><div class="sw-weight" id="weight-4">-</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Modelo XGBoost - Trafico Detectado</h2>
+      <div class="traffic-box">
+        <div class="traffic-type t1" id="trafType">-</div>
+        <div style="flex:1">
+          <div class="traffic-desc"   id="trafDesc">Sin datos</div>
+          <div class="traffic-weight" id="trafWeight">Peso Dijkstra: -</div>
+          <div class="traffic-conf"   id="trafConf">Confianza: -</div>
+          <div style="margin-top:10px;display:flex;flex-direction:column;gap:4px">
+            <div style="display:flex;align-items:center;gap:6px">
+              <span style="font-size:10px;color:#4ade80;min-width:28px;font-family:monospace">T1</span>
+              <div style="flex:1;background:#0f0f1a;border-radius:3px;height:7px">
+                <div id="prob-bar-1" style="height:7px;border-radius:3px;background:#4ade80;width:0%;transition:width .6s"></div>
+              </div>
+              <span id="prob-val-1" style="font-size:10px;color:#4ade80;min-width:34px;text-align:right;font-family:monospace">0%</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px">
+              <span style="font-size:10px;color:#fbbf24;min-width:28px;font-family:monospace">T2</span>
+              <div style="flex:1;background:#0f0f1a;border-radius:3px;height:7px">
+                <div id="prob-bar-2" style="height:7px;border-radius:3px;background:#fbbf24;width:0%;transition:width .6s"></div>
+              </div>
+              <span id="prob-val-2" style="font-size:10px;color:#fbbf24;min-width:34px;text-align:right;font-family:monospace">0%</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px">
+              <span style="font-size:10px;color:#f87171;min-width:28px;font-family:monospace">T3</span>
+              <div style="flex:1;background:#0f0f1a;border-radius:3px;height:7px">
+                <div id="prob-bar-3" style="height:7px;border-radius:3px;background:#f87171;width:0%;transition:width .6s"></div>
+              </div>
+              <span id="prob-val-3" style="font-size:10px;color:#f87171;min-width:34px;text-align:right;font-family:monospace">0%</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Topologia de Red</h2>
+    <canvas id="topoCanvas"></canvas>
+  </div>
+
+  <div class="card">
+    <h2>Enrutamiento Dijkstra (pesos dinamicos XGBoost)</h2>
+    <div class="route-inputs">
+      <label>Origen:</label>
+      <select id="srcHost">
+        <option>h1</option><option>h2</option><option>h3</option>
+        <option>h4</option><option>h5</option><option>h6</option>
+        <option>h7</option><option>h8</option><option>h9</option>
+      </select>
+      <label>Destino:</label>
+      <select id="dstHost">
+        <option>h9</option><option>h8</option><option>h7</option>
+        <option>h6</option><option>h5</option><option>h4</option>
+        <option>h3</option><option>h2</option><option>h1</option>
+      </select>
+      <button class="btn btn-cyan" onclick="calcRoute()">Calcular Ruta</button>
+      <button class="btn btn-gray" onclick="calcBandwidth()">Ver Ancho de Banda</button>
+    </div>
+    <div class="route-result" id="routeResult">Selecciona origen y destino y pulsa "Calcular Ruta"</div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <h2>Control de Stream Multicast</h2>
+      <div id="hostList"></div>
+    </div>
+    <div class="card">
+      <h2>Ancho de Banda por Ruta</h2>
+      <div id="bwPanel"><div style="color:#555;font-size:12px">Calcula una ruta para ver el ancho de banda</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Log de Acciones</h2>
+    <div id="log"></div>
+  </div>
+
+</div>
+
+<script>
+// ?? Config ????????????????????????????????????????????????????????????????????
+function BASE() { return document.getElementById('proxyUrl').value.replace(/\/$/,''); }
+
+const H = {'Content-Type':'application/json','ngrok-skip-browser-warning':'1'};
+
+const HOST_MAP = {
+  h1:{dpid:2,port:2}, h2:{dpid:2,port:3}, h3:{dpid:2,port:4},
+  h4:{dpid:3,port:2}, h5:{dpid:3,port:3}, h6:{dpid:3,port:4},
+  h7:{dpid:4,port:2}, h8:{dpid:4,port:3}, h9:{dpid:4,port:4},
+};
+const hostState = {};
+Object.keys(HOST_MAP).forEach(h => hostState[h] = true);
+
+let _lastWeight = 10;
+let _lastTraf   = 1;
+
+// ?? Log ???????????????????????????????????????????????????????????????????????
+function log(msg, type='ok') {
+  const div = document.getElementById('log');
+  const el  = document.createElement('div');
+  el.className   = 'log-' + type;
+  el.textContent = '[' + new Date().toLocaleTimeString() + '] ' + msg;
+  div.prepend(el);
+  while(div.children.length > 60) div.removeChild(div.lastChild);
+}
+
+// ?? HTTP ??????????????????????????????????????????????????????????????????????
+async function GET(path) {
+  const r = await fetch(BASE()+path, {headers:H});
+  return r.json();
+}
+async function POST(path, body) {
+  const r = await fetch(BASE()+path, {method:'POST',headers:H,body:JSON.stringify(body)});
+  return r.ok;
+}
+async function POST_JSON(path, body) {
+  const r = await fetch(BASE()+path, {method:'POST',headers:H,body:JSON.stringify(body)});
+  return r.json();
+}
+
+// ?? Badges ????????????????????????????????????????????????????????????????????
+function badge(id, cls, txt) {
+  const el = document.getElementById('badge-'+id);
+  el.className   = 'badge '+cls;
+  el.textContent = txt;
+}
+
+async function checkHealth() {
+  try {
+    const sw = await GET('/stats/switches');
+    badge('ryu', sw.length>0?'ok':'err', 'RYU '+sw.length+' SW');
+  } catch { badge('ryu','err','RYU ERR'); }
+  try {
+    const h = await GET('/health');
+    badge('xgb',   h.xgb_model==='ok'      ?'ok':'err', 'XGB '   +h.xgb_model.toUpperCase());
+    badge('route', h.dijkstra_router==='ok' ?'ok':'err', 'ROUTER '+h.dijkstra_router.toUpperCase());
+  } catch {
+    badge('xgb','err','XGB ERR');
+    badge('route','err','ROUTER ERR');
+  }
+}
+
+// ?? XGBoost ???????????????????????????????????????????????????????????????????
+async function fetchTraffic() {
+  try {
+    const d = await GET('/predict');
+    const t = d.traffic_type || 1;
+    _lastWeight = d.dijkstra_weight || 10;
+    _lastTraf   = t;
+    const el = document.getElementById('trafType');
+    el.textContent = 'T'+t;
+    el.className   = 'traffic-type t'+t;
+    document.getElementById('trafDesc').textContent   = d.description || '-';
+    document.getElementById('trafWeight').textContent = 'Peso Dijkstra: '+_lastWeight;
+    document.getElementById('trafConf').textContent   = 'Confianza: '+(d.confidence*100).toFixed(1)+'%';
+    for(let i=1;i<=4;i++) {
+      const w = document.getElementById('weight-'+i);
+      if(w) w.textContent = 'Peso: '+_lastWeight;
+    }
+    // Actualizar barras de probabilidad
+    if(d.probabilities) {
+      for(const k of ['1','2','3']) {
+        const pct = ((d.probabilities[k]||0)*100).toFixed(1);
+        const bar = document.getElementById('prob-bar-'+k);
+        const val = document.getElementById('prob-val-'+k);
+        if(bar) bar.style.width = pct+'%';
+        if(val) val.textContent = pct+'%';
+      }
+    }
+    drawTopo(_lastWeight, _lastTraf);
+  } catch {}
+}
+
+// ?? Flows ?????????????????????????????????????????????????????????????????????
+async function fetchFlows() {
+  for(const dpid of [1,2,3,4]) {
+    try {
+      const d = await GET('/stats/flow/'+dpid);
+      const n = (d[dpid]||[]).length;
+      document.getElementById('flows-'+dpid).textContent = n+' flujos';
+    } catch {}
+  }
+}
+
+// ?? FLOOD ?????????????????????????????????????????????????????????????????????
+async function installForwarding() {
+  log('Instalando FLOOD en switches 1-4...');
+  let ok = 0;
+  for(const dpid of [1,2,3,4]) {
+    const r = await POST('/stats/flowentry/add',
+      {dpid, priority:0, match:{}, actions:[{type:'OUTPUT',port:'FLOOD'}]});
+    if(r) { log('FLOOD instalado en DPID '+dpid); ok++; }
+    else    log('Error en DPID '+dpid,'err');
+  }
+  return ok === 4;
+}
+
+// ?? Dijkstra ??????????????????????????????????????????????????????????????????
+async function calcRoute() {
+  const src = document.getElementById('srcHost').value;
+  const dst = document.getElementById('dstHost').value;
+  if(src === dst) {
+    document.getElementById('routeResult').innerHTML =
+      '<span style="color:#f87171">Origen y destino deben ser distintos</span>';
+    return;
+  }
+  log('Calculando ruta: '+src+' -> '+dst+'...');
+  document.getElementById('routeResult').textContent = 'Calculando...';
+  try {
+    const d = await POST_JSON('/route', {src, dst});
+    if(d.error) throw new Error(d.error);
+    const tc = d.traffic_type===1?'#4ade80':d.traffic_type===2?'#fbbf24':'#f87171';
+    const pathHtml = d.path.map(n =>
+      '<div class="route-node">'+n.switch+
+      '<br><span style="font-size:9px;color:#aaa">'+n.name+'</span></div>'
+    ).join('<div class="route-arrow">-></div>');
+    document.getElementById('routeResult').innerHTML =
+      '<div style="color:#aaa;font-size:11px;margin-bottom:6px">'+
+      'Trafico: <strong style="color:'+tc+'">'+d.traffic_desc+'</strong>'+
+      ' &nbsp;|&nbsp; Peso: <strong style="color:#00d4ff">'+d.dijkstra_weight+'</strong>'+
+      ' &nbsp;|&nbsp; Costo: <strong style="color:#00d4ff">'+d.cost+'</strong>'+
+      ' &nbsp;|&nbsp; Hops: <strong style="color:#00d4ff">'+d.hops+'</strong>'+
+      '</div>'+
+      '<div class="route-path">'+pathHtml+'</div>'+
+      '<div style="color:#4ade80;font-size:11px;margin-top:8px">'+
+      (d.flows_installed||[]).length+' flows instalados en los switches</div>';
+    updateBW(d.bandwidth_mbps, src, dst);
+    log('Ruta: '+d.path.map(n=>n.switch).join('->')+' | BW: '+d.bandwidth_mbps+' Mbps');
+  } catch(e) {
+    document.getElementById('routeResult').innerHTML =
+      '<span style="color:#f87171">Error: '+e.message+'</span>';
+    log('Error ruta: '+e.message,'err');
+  }
+}
+
+async function calcBandwidth() {
+  const src = document.getElementById('srcHost').value;
+  const dst = document.getElementById('dstHost').value;
+  try {
+    const d = await GET('/bandwidth/'+src+'/'+dst);
+    updateBW(d.bandwidth_mbps, src, dst);
+    log('BW '+src+'->'+dst+': '+d.bandwidth_mbps+' Mbps');
+  } catch(e) { log('Error BW: '+e.message,'err'); }
+}
+
+function updateBW(bw, src, dst) {
+  const pct   = Math.min(100, (bw/100)*100);
+  const color = bw>=80?'#4ade80':bw>=40?'#fbbf24':'#f87171';
+  document.getElementById('bwPanel').innerHTML =
+    '<div style="color:#aaa;font-size:12px;margin-bottom:10px">'+src+' -> '+dst+'</div>'+
+    '<div class="bw-row">'+
+    '<div class="bw-label">Ancho de banda</div>'+
+    '<div class="bw-bar-wrap">'+
+    '<div class="bw-bar" style="width:'+pct+'%;background:'+color+'"></div></div>'+
+    '<div class="bw-value" style="color:'+color+'">'+bw+' Mbps</div></div>'+
+    '<div style="font-size:11px;color:#555;margin-top:6px">Capacidad maxima: 100 Mbps</div>';
+}
+
+// ?? Topologia canvas ??????????????????????????????????????????????????????????
+function drawTopo(weight, trafType) {
+  const cv = document.getElementById('topoCanvas');
+  cv.width  = cv.getBoundingClientRect().width || cv.offsetWidth || 800;
+  cv.height = 210;
+  const ctx = cv.getContext('2d');
+  const W = cv.width, H = cv.height;
+  ctx.clearRect(0,0,W,H);
+
+  const tColor = trafType===1?'#4ade80':trafType===2?'#fbbf24':'#f87171';
+
+  const s1 = {x:W/2,    y:35};
+  const s2 = {x:W*.18,  y:115};
+  const s3 = {x:W*.5,   y:115};
+  const s4 = {x:W*.82,  y:115};
+  const hs = [
+    {x:W*.08, y:185, n:'h1'}, {x:W*.18, y:185, n:'h2'}, {x:W*.28, y:185, n:'h3'},
+    {x:W*.4,  y:185, n:'h4'}, {x:W*.5,  y:185, n:'h5'}, {x:W*.6,  y:185, n:'h6'},
+    {x:W*.72, y:185, n:'h7'}, {x:W*.82, y:185, n:'h8'}, {x:W*.92, y:185, n:'h9'},
+  ];
+
+  ctx.strokeStyle=tColor; ctx.lineWidth=1.5; ctx.setLineDash([4,3]);
+  [[s1,s2],[s1,s3],[s1,s4]].forEach(([a,b])=>{
+    ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+  });
+  ctx.setLineDash([]);
+
+  ctx.fillStyle='#fbbf24'; ctx.font='10px monospace'; ctx.textAlign='center';
+  [[s1,s2],[s1,s3],[s1,s4]].forEach(([a,b])=>{
+    ctx.fillText('w='+weight,(a.x+b.x)/2+14,(a.y+b.y)/2);
+  });
+
+  ctx.strokeStyle='#1e3a5f'; ctx.lineWidth=1;
+  hs.forEach((h,i)=>{
+    const sw=i<3?s2:i<6?s3:s4;
+    ctx.beginPath(); ctx.moveTo(sw.x,sw.y); ctx.lineTo(h.x,h.y); ctx.stroke();
+  });
+
+  [['s1',s1,true],['s2',s2,false],['s3',s3,false],['s4',s4,false]].forEach(([lbl,p,root])=>{
+    ctx.beginPath(); ctx.arc(p.x,p.y,root?16:13,0,Math.PI*2);
+    ctx.fillStyle=root?'#1a3a6a':'#162a4a'; ctx.fill();
+    ctx.strokeStyle='#00d4ff'; ctx.lineWidth=1.5; ctx.stroke();
+    ctx.fillStyle='#00d4ff'; ctx.font='bold '+(root?11:10)+'px monospace';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(lbl,p.x,p.y);
+  });
+
+  hs.forEach(h=>{
+    const on=hostState[h.n];
+    ctx.beginPath(); ctx.arc(h.x,h.y,10,0,Math.PI*2);
+    ctx.fillStyle=on?'#0d2a1a':'#2a0d0d'; ctx.fill();
+    ctx.strokeStyle=on?'#4ade80':'#f87171'; ctx.lineWidth=1.5; ctx.stroke();
+    ctx.fillStyle=on?'#4ade80':'#f87171';
+    ctx.font='9px monospace'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(h.n,h.x,h.y);
+  });
+}
+
+// ?? Control Multicast ?????????????????????????????????????????????????????????
+function buildHostList() {
+  const sw = {
+    h1:'s2 p2',h2:'s2 p3',h3:'s2 p4',
+    h4:'s3 p2',h5:'s3 p3',h6:'s3 p4',
+    h7:'s4 p2',h8:'s4 p3',h9:'s4 p4'
+  };
+  const ip = {
+    h1:'10.0.0.1',h2:'10.0.0.2',h3:'10.0.0.3',
+    h4:'10.0.0.4',h5:'10.0.0.5',h6:'10.0.0.6',
+    h7:'10.0.0.7',h8:'10.0.0.8',h9:'10.0.0.9'
+  };
+  document.getElementById('hostList').innerHTML =
+    Object.keys(HOST_MAP).map(h =>
+      '<div class="host-row">'+
+      '<div class="host-dot" id="dot-'+h+'"></div>'+
+      '<div><div class="host-name">'+h+'</div>'+
+      '<div class="host-ip">'+ip[h]+' - '+sw[h]+'</div></div>'+
+      '<div class="host-status" id="status-'+h+'">Activo</div>'+
+      '<button class="toggle-btn active" id="btn-'+h+'" onclick="toggleHost(\''+h+'\')">Desactivar</button>'+
+      '</div>'
+    ).join('');
+}
+
+async function toggleHost(h) {
+  const btn = document.getElementById('btn-'+h);
+  btn.disabled = true;
+  const {dpid, port} = HOST_MAP[h];
+
+  // Cambiar estado optimistamente
+  hostState[h] = !hostState[h];
+
+  // Calcular puertos activos en este switch despues del cambio
+  const activePorts = Object.entries(HOST_MAP)
+    .filter(([n, v]) => v.dpid === dpid && hostState[n])
+    .map(([, v]) => v.port);
+
+  try {
+    const r = await fetch(BASE()+'/multicast/block', {
+      method:  'POST',
+      headers: H,
+      body:    JSON.stringify({ dpid, block_port: port, active_ports: activePorts }),
+    });
+
+    // Leer siempre el body para obtener el mensaje de error si lo hay
+    let data = {};
+    try { data = await r.json(); } catch(_) {}
+
+    if(r.ok && data.ok) {
+      const on = hostState[h];
+      btn.textContent = on ? 'Desactivar' : 'Activar';
+      btn.className   = on ? 'toggle-btn active' : 'toggle-btn inactive';
+      document.getElementById('dot-'+h).className       = on ? 'host-dot' : 'host-dot off';
+      document.getElementById('status-'+h).textContent  = on ? 'Activo'   : 'Bloqueado';
+      log(h + (on ? ' activado - stream restaurado' : ' bloqueado - stream cortado'),
+          on ? 'ok' : 'warn');
+    } else {
+      // Revertir estado si el servidor fallo
+      hostState[h] = !hostState[h];
+      const errMsg = data.error || ('HTTP ' + r.status);
+      log('Error al cambiar estado de ' + h + ': ' + errMsg, 'err');
+    }
+  } catch(e) {
+    // Revertir estado si hubo error de red
+    hostState[h] = !hostState[h];
+    log('Error de red en ' + h + ': ' + e.message, 'err');
+  }
+
+  btn.disabled = false;
+  drawTopo(_lastWeight, _lastTraf);
+}
+
+// ?? Init ??????????????????????????????????????????????????????????????????????
+async function init() {
+  log('Conectando...');
+  buildHostList();
+  drawTopo(_lastWeight, _lastTraf);
+  await checkHealth();
+  const ok = await installForwarding();
+  if(ok) log('Red lista.');
+  else   log('Error instalando forwarding','err');
+  fetchFlows();
+  fetchTraffic();
+}
+
+setInterval(fetchFlows,   5000);
+setInterval(fetchTraffic, 8000);
+setInterval(checkHealth,  15000);
+window.addEventListener('resize', () => drawTopo(_lastWeight, _lastTraf));
+
+window.addEventListener('load', () => {
+  buildHostList();
+  drawTopo(_lastWeight, _lastTraf);
+  init();
+});
+</script>
+</body>
+</html>
